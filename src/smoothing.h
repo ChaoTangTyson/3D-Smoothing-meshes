@@ -30,7 +30,9 @@ Eigen::MatrixXd Im_smoothing(
 	Eigen::MatrixXd const & V,
 	Eigen::MatrixXi const & F,
 	double const & lambda, int const & iter);
-
+Eigen::MatrixXd Noise(
+	Eigen::MatrixXd const & V,
+	float noiseLevel);
 #endif
 
 

@@ -1,4 +1,4 @@
-
+#include <cmath>
 #include <igl/adjacency_list.h>
 #include <igl/vertex_triangle_adjacency.h>
 #include <igl/parula.h>
@@ -11,59 +11,17 @@
 #include <Eigen/Dense>
 #include <Eigen/Sparse>
 #include<Eigen/SparseCholesky>
+#include <Eigen/Core>
+#include <Eigen/SparseCore>
 
 #include "curvature.h"
+#include "Spectra/SymEigsSolver.h"
+#include "Spectra/MatOp/SparseSymMatProd.h"
 
 ///////////////////////////////////
 ///////The curvature part//////////
 ///////////////////////////////////
-
-void get_boundary_vex(
-	Eigen::MatrixXd const & V, 
-	Eigen::MatrixXi const & F,
-	Eigen::MatrixXd & out_bvex)
-{
-	// You job is to use igl::boundary_loop to find boundary vertices
-	// 
-	// V : input vertices, N-by-3
-	// F : input faces
-	//
-	// out_bvex : output vertices, K-by-3
-	// 
-	//  Hints:
-	//   Eigen::VectorXi b_bex_index
-	//     igl::boundary_loop( F_in , b_bex_index )
-	// 
-	Eigen::VectorXi b_bex_index;
-	igl::boundary_loop(F, b_bex_index);
-	// cout << "the size of b_b_index  " <<b_bex_index.size() << endl;
-	out_bvex.resize(b_bex_index.size(), 3);
-
-	for (size_t i=0; i < b_bex_index.size(); ++i)
-	{
-		out_bvex.row(i) = V.row(b_bex_index[i]);
-		// cout << "b_bex_index[i]  "<< b_bex_index[i] << endl;
-		// cout << "V.row(b_bex_index[i])  " << V.row(b_bex_index[i]) << endl;
-	}
-	//  cout << "the output of out_bvex   " << out_bvex.size() << endl;
-}
-
-void get_boundary_edges( 
-	Eigen::MatrixXi const & F,
-	Eigen::MatrixXi & out_b_edge)
-{
-	// You job is to use igl::boundary_facets to find boundary edges
-	//  
-	// F : input faces
-	// 
-	// out_bedge : output edges, K-by-2 (two vertices index)
-	// 
-	//  Hints:
-	//   Eigen::MatrixXi b_edge
-	//     igl::boundary_facets( F_in , b_edge )
-	//  
-	igl::boundary_facets(F, out_b_edge);
-}
+double const M_PI = 3.1415926535897935;
 
 Eigen::SparseMatrix<double> Uniform_Laplacian(
 	Eigen::MatrixXd const & V,
@@ -137,6 +95,126 @@ Eigen::SparseMatrix<double> Barycentric_Area(
 	return Area;
 }
 
+Eigen::SparseMatrix<double> GetCot(
+	Eigen::MatrixXd const & V,
+	Eigen::MatrixXi const & F)
+{
+	
+	int N = V.rows();
+	Eigen::SparseMatrix<double> Cot(N, N);
+	// Get adjacent face for each vertex
+	std::vector<std::vector<int> > VF;
+	std::vector<std::vector<int> > VFi;
+	igl::vertex_triangle_adjacency(V.rows(), F, VF, VFi);
+	std::cout << "VF0 size  " << VF[0].size() << std::endl;
+	// Get adjacent vertices for each vertex
+	std::vector<std::vector<int> > adj_V;
+	igl::adjacency_list(F, adj_V, true);
+	std::cout << "V0 size adj " << adj_V[0].size() << std::endl;
+
+	for (int i = 0; i < N;i++) // only the first vertex
+	{
+		Eigen::VectorXd Vi = V.row(i);
+		double sumcotVi = 0;
+		for (int j = 0; j < adj_V[i].size(); j++)
+		{
+			int indexJ = adj_V[i][j];
+			Eigen::VectorXd Vj = V.row(indexJ);
+			double sumcotVj = 0;
+			// Loop for each face to check if it has edges ViVj
+			for (int f = 0; f < VF[i].size(); f++)
+			{
+				Eigen::VectorXi thisF = F.row(VF[i][f]);
+
+				if (thisF[0] == i && thisF[1] == indexJ)
+				{
+					Eigen::VectorXd Vk = V.row(thisF[2]);
+					double Costheta = (Vi - Vk).dot(Vj - Vk) / ((Vi - Vk).norm()*(Vj - Vk).norm());
+					double cottheta = 1/tan(acos(Costheta));
+					sumcotVj = sumcotVj + cottheta;
+				}
+				else if (thisF[0] == i && thisF[2] == indexJ)
+				{
+					Eigen::VectorXd Vk = V.row(thisF[1]);
+					double Costheta = (Vi - Vk).dot(Vj - Vk) / ((Vi - Vk).norm()*(Vj - Vk).norm());
+					double cottheta = 1 / tan(acos(Costheta));
+					sumcotVj = sumcotVj + cottheta;
+				}
+				else if (thisF[1] == i && thisF[0] == indexJ)
+				{
+					Eigen::VectorXd Vk = V.row(thisF[2]);
+					double Costheta = (Vi - Vk).dot(Vj - Vk) / ((Vi - Vk).norm()*(Vj - Vk).norm());
+					double cottheta = 1 / tan(acos(Costheta));
+					sumcotVj = sumcotVj + cottheta;
+				}
+				else if (thisF[2] == i && thisF[0] == indexJ)
+				{
+					Eigen::VectorXd Vk = V.row(thisF[1]);
+					double Costheta = (Vi - Vk).dot(Vj - Vk) / ((Vi - Vk).norm()*(Vj - Vk).norm());
+					double cottheta = 1 / tan(acos(Costheta));
+					sumcotVj = sumcotVj + cottheta;
+				}
+				else if (thisF[2] == i && thisF[1] == indexJ)
+				{
+					Eigen::VectorXd Vk = V.row(thisF[0]);
+					double Costheta = (Vi - Vk).dot(Vj - Vk) / ((Vi - Vk).norm()*(Vj - Vk).norm());
+					double cottheta = 1 / tan(acos(Costheta));
+					sumcotVj = sumcotVj + cottheta;
+				}
+				else if (thisF[1] == i && thisF[2] == indexJ)
+				{
+					Eigen::VectorXd Vk = V.row(thisF[0]);
+					double Costheta = (Vi - Vk).dot(Vj - Vk) / ((Vi - Vk).norm()*(Vj - Vk).norm());
+					double cottheta = 1 / tan(acos(Costheta));
+					sumcotVj = sumcotVj + cottheta;
+				}
+
+			}
+			Cot.insert(i, indexJ) = 0.5 * sumcotVj;
+			sumcotVi = sumcotVi + 0.5 * sumcotVj;
+		}
+		Cot.insert(i, i) = - sumcotVi;
+	}
+
+	return Cot;
+}
+
+Eigen::SparseMatrix<double> GetCot2(
+	Eigen::MatrixXd const & V,
+	Eigen::MatrixXi const & F)
+{
+	int N = V.rows();
+	Eigen::SparseMatrix<double> Cot(N, N);
+
+	// Get adjacent vertices for each vertex
+	std::vector<std::vector<int> > adj_V;
+	igl::adjacency_list(F, adj_V, true);
+
+	for (int i = 0; i < N; i++)
+	{
+		Eigen::VectorXd Vi = V.row(i);
+		int neighbour = adj_V[i].size();
+		double sumVi = 0;
+		for (int j = 0; j < adj_V[i].size(); j++)
+		{
+			Eigen::Vector3d Vleft = V.row(adj_V[i][(j + neighbour - 1) % neighbour]);
+			Eigen::Vector3d Vright = V.row(adj_V[i][(j + 1)% neighbour]);
+			Eigen::Vector3d Vj = V.row(adj_V[i][j]);
+
+			double angle1 = acos((Vi - Vleft).dot(Vj - Vleft) / ((Vi - Vleft).norm() * (Vj - Vleft).norm()));
+			double angle2 = acos((Vi - Vright).dot(Vj - Vright) / ((Vi - Vright).norm() * (Vj - Vright).norm()));
+			double cotan1 = 1/tan(angle1);
+			double cotan2 = 1/tan(angle2);
+			double sumVj = 0.5 * (cotan1 + cotan2);
+
+			Cot.insert(i, adj_V[i][j]) = sumVj;
+			sumVi += sumVj;
+		}
+		Cot.insert(i, i) = - sumVi;
+	}
+	return Cot;
+}
+
 Eigen::SparseMatrix<double> Laplace_Beltrami(
 	Eigen::MatrixXd const & V,
 	Eigen::MatrixXi const & F)
@@ -154,12 +232,17 @@ Eigen::SparseMatrix<double> Laplace_Beltrami(
 	//	igl::massmatrix(V, F, igl::MASSMATRIX_TYPE_VORONOI, Area );
 	//	
 	// 以下为验证集(validation code)
-	Eigen::SparseMatrix<double>  Area_1, Area_2, C;
+	Eigen::SparseMatrix<double>  Area_1, Area_2, C,C_1,C_2;
 	igl::cotmatrix(V, F, C);
+	C_1 = GetCot(V, F);
+	C_2 = GetCot2(V, F);
 	igl::massmatrix(V, F, igl::MASSMATRIX_TYPE_BARYCENTRIC, Area_1);
 	Area_2 = Barycentric_Area(V, F);
 	//std::cout << "Area by my function for first element " << Area_1.coeff(0, 0) << std::endl;
 	//std::cout << "Area by built-in-funciton for first element " << Area_2.coeff(0, 0) << std::endl;
+	std::cout << "Cot by my function1 for first element " << C_1.coeff(100, 100) << std::endl;
+	std::cout << "Cot by my function2 for first element " << C_2.coeff(100, 100) << std::endl;
+	std::cout << "Cot by built-in-funciton for first element " << C.coeff(100, 100) << std::endl;
 	//以上为验证
 
 	Eigen::SparseMatrix<double> AreaInv(N, N);
@@ -224,12 +307,66 @@ Eigen::VectorXd compute_K(
 			thetaSum = thetaSum + thetaj;
 			// std::cout << "thetaSum  " << thetaSum << std::endl;
 		}
-		double M_PI = 3.1415926535897935;
-		K[i] = (2 * M_PI - thetaSum) / current_Area;
+		double PI = 3.1415926535897935;
+		K[i] = (2 * PI - thetaSum) / current_Area;
 		
 	}
 
 	return K;
+}
+
+Eigen::MatrixXd Reconstruction(
+	Eigen::MatrixXd const & V,
+	Eigen::MatrixXi const & F,
+	int const & k
+)
+{
+	Eigen::MatrixXd New_V(V.rows(),V.cols());
+	New_V.setZero() ;
+
+	Eigen::SparseMatrix<double> M = Barycentric_Area(V, F);
+	// Eigen::SparseMatrix<double> M(V.rows(), V.rows());
+	// igl::massmatrix(V, F, igl::MASSMATRIX_TYPE_BARYCENTRIC, M);
+	//  Eigen::SparseMatrix<double> M_inv(V.rows(), V.rows());
+	// igl::invert_diag(M, M_inv);
+	Eigen::SparseMatrix<double> Minv_half = M.cwiseSqrt().cwiseInverse();
+
+	Eigen::SparseMatrix<double> C(V.rows(), V.rows());
+	igl::cotmatrix(V, F, C);
+	
+
+	Eigen::SparseMatrix<double> Lapla_telta = Minv_half * -1.0 * C * Minv_half;
+
+	// Spectra::SparseSymMatProd<double> op(C);
+	Spectra::SparseSymMatProd<double> op(Lapla_telta);
+	Spectra::SymEigsSolver< double, Spectra::SMALLEST_ALGE, Spectra::SparseSymMatProd<double> > eigs(&op, k, 2*k + 15);
+
+	// Initialize and compute
+	eigs.init();
+	int nconv = eigs.compute();
+
+	// Check if the Built-in-funcion works
+	if (eigs.info() == Spectra::SUCCESSFUL)
+	{
+		std::cout << "Eigen Vectors calculation SUCCESSFUL" << std::endl;
+	}
+	else
+	{
+		std::cout << "Eigen Vectors NOT FOUND" << std::endl;
+		std::cout << "Return the Original Vertex coordinates" << std::endl;
+		return New_V;
+	}
+	// Retrieve results
+	Eigen::MatrixXcd EigenVec_complex = eigs.eigenvectors();
+
+	Eigen::MatrixXd EigenVec = Minv_half * EigenVec_complex.real();
+	// std::cout << " Check the symetric of C " << EigenVec.col(0).transpose() * EigenVec.col(0) << std::endl;
+
+	for (int i = 0; i < EigenVec.cols(); i++)
+	{
+		New_V +=  EigenVec.col(i) * (V.transpose() * M * EigenVec.col(i)).transpose();
+	}
+	return New_V;
 }
 
 void calculate_vertex_normal(

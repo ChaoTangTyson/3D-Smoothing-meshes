@@ -1,42 +1,27 @@
+
 #include <igl/readOFF.h>
 #include <igl/opengl/glfw/Viewer.h>
 #include <igl/opengl/glfw/imgui/ImGuiMenu.h>
 #include <igl/opengl/glfw/imgui/ImGuiHelpers.h>
-#include <igl/vertex_triangle_adjacency.h>
+
 #include <imgui/imgui.h>
-#include <igl/readPLY.h>
-#include <igl/cotmatrix.h>
-#include <igl/massmatrix.h>
-#include <igl/invert_diag.h>
+
 #include <igl/file_exists.h>
 #include <igl/setdiff.h> 
 #include <igl/slice.h>
 #include <igl/slice_into.h>
-#include <igl/boundary_loop.h>
-#include <igl/boundary_facets.h>
-#include <igl/unique.h>
-
-#include <Eigen/Dense>
-#include <Eigen/SVD>
-#include <Eigen/Sparse>
-#include <Eigen/SparseCholesky>
-#include <Eigen/LU>
-
-// #include <Spectra/SymEigsSolver.h>
 
 #include <iostream>
 #include "curvature.h"
 #include "smoothing.h"
 
-
 using namespace std;
-
 
 class MyContext
 {
 public:
 
-	MyContext() :nv_len(0), point_size(10), line_width(6), mode(0),lambda(0.01), iteration(1)
+	MyContext() :nv_len(0), point_size(0.5), line_width(1), mode(0), percentage_lambda(0.01), iteration(5)
 	{
 
 	}
@@ -54,12 +39,13 @@ public:
 	float nv_len;
 	float point_size;
 	float line_width;
-	
-	int k;// The number of EigenVector used to reconstruct the meshes
+	int current_mesh = 0;
+	int k = 1;// The number of EigenVector used to reconstruct the meshes
  	int mode;
 	int iteration;
 	float lambda ;
-	float percentage_lambda = 0.1;
+	float percentage_lambda ;
+	float noise = 0;
 
 	void concate(Eigen::MatrixXd const & VA,
 		Eigen::MatrixXi const & FA, 
@@ -113,7 +99,7 @@ MyContext g_myctx;
 bool key_down(igl::opengl::glfw::Viewer& viewer, unsigned char key, int modifier)
 {
 
-	std::cout << "Key: " << key << " " << (unsigned int)key << std::endl;
+	std::cout << "key: " << key << " " << (unsigned int)key << std::endl;
 	if (key=='q' || key=='Q')
 	{
 		exit(0);
@@ -158,7 +144,6 @@ void get_example_mesh(std::string const meshname , Eigen::MatrixXd & V, Eigen::M
 
 }
 
-
 int main(int argc, char *argv[])
 {
 	//------------------------------------------
@@ -187,7 +172,7 @@ int main(int argc, char *argv[])
 	// menu variable Shared between two menus
 	double doubleVariable = 0.1f; 
 	// The index number of the current mesh
-	int current_mesh = 0;
+	
 	// Add content to the default menu window via defining a Lambda expression with captures by reference([&])
 	menu.callback_draw_viewer_menu = [&]()
 	{
@@ -244,15 +229,15 @@ int main(int argc, char *argv[])
 		ImGui::Begin( "MyProperties", nullptr, ImGuiWindowFlags_NoSavedSettings );
 		
 		// select mesh
-		const char* mesh_list[] = { "camelhead","bunny" , "camel" ,"cow","cube" };
+		const char* mesh_list[] = { "camelhead","bunny" , "camel" ,"cow","cow_manifold" };
 		
-		if (ImGui::ListBox("mesh_list\n(single select)", &current_mesh, mesh_list, IM_ARRAYSIZE(mesh_list), 6))
+		if (ImGui::ListBox("mesh_list\n(single select)", &g_myctx.current_mesh, mesh_list, IM_ARRAYSIZE(mesh_list), 6))
 		{
-			if (current_mesh ==  0){get_example_mesh("camelhead.off", g_myctx.m_V, g_myctx.m_F, g_myctx.m_VN);}
-			else if (current_mesh == 1) { get_example_mesh("bunny.off", g_myctx.m_V, g_myctx.m_F, g_myctx.m_VN); }
-			else if (current_mesh == 2) { get_example_mesh("camel.off", g_myctx.m_V, g_myctx.m_F, g_myctx.m_VN); }
-			else if (current_mesh == 3) { get_example_mesh("cow.off", g_myctx.m_V, g_myctx.m_F, g_myctx.m_VN); }
-			else if (current_mesh == 4) { get_example_mesh("cube.off", g_myctx.m_V, g_myctx.m_F, g_myctx.m_VN); }
+			if (g_myctx.current_mesh ==  0){get_example_mesh("camelhead.off", g_myctx.m_V, g_myctx.m_F, g_myctx.m_VN);}
+			else if (g_myctx.current_mesh == 1) { get_example_mesh("bunny.off", g_myctx.m_V, g_myctx.m_F, g_myctx.m_VN); }
+			else if (g_myctx.current_mesh == 2) { get_example_mesh("camel.off", g_myctx.m_V, g_myctx.m_F, g_myctx.m_VN); }
+			else if (g_myctx.current_mesh == 3) { get_example_mesh("cow.off", g_myctx.m_V, g_myctx.m_F, g_myctx.m_VN); }
+			else if (g_myctx.current_mesh == 4) { get_example_mesh("cow_manifold.off", g_myctx.m_V, g_myctx.m_F, g_myctx.m_VN); }
 
 			g_myctx.mode = 0;
 			g_myctx.reset_display(viewer);
@@ -305,7 +290,7 @@ int main(int argc, char *argv[])
 				cout << "Sparse L_uni done" << endl;
 
 				Eigen::VectorXd K = compute_K(g_myctx.m_V, g_myctx.m_F);
-				K = 1000 * K.array() / (K.maxCoeff() - K.minCoeff());
+				K = 100 * K.array() / (K.maxCoeff() - K.minCoeff());
 
 				//replace by color scheme
 				igl::parula(K, false, g_myctx.m_C);
@@ -349,7 +334,10 @@ int main(int argc, char *argv[])
 			if (ImGui::Button("Reconstruction", ImVec2(-1, 0)))
 			{
 				// Waiting to change
-				g_myctx.mode = 1;
+				Eigen::MatrixXd New_V;
+				g_myctx.m_V = Reconstruction(g_myctx.m_V, g_myctx.m_F, g_myctx.k);
+
+				g_myctx.mode = 0;
 				g_myctx.reset_display(viewer);
 			}
 
@@ -367,12 +355,16 @@ int main(int argc, char *argv[])
 
 				double ModelSize = (M - m).norm();
 				cout << "The model size :  " << ModelSize << endl;
-				g_myctx.lambda = g_myctx.percentage_lambda / 100000 * ModelSize;
+				g_myctx.lambda = g_myctx.percentage_lambda / 100000;//* ModelSize;
 				cout << "Time step set :  " << g_myctx.lambda << endl;
 			}
 			if (ImGui::InputInt("Iteration", &g_myctx.iteration))
 			{
 				cout << "Iteration set :  " << g_myctx.iteration << endl;
+			}
+			if (ImGui::InputFloat("Add noise", &g_myctx.noise))
+			{
+				cout << "Noise  Level set :  " << g_myctx.noise << endl;
 			}
 			if (ImGui::Button("Explicit Smoothing", ImVec2(-1, 0)))
 			{
@@ -395,11 +387,42 @@ int main(int argc, char *argv[])
 			}
 			if (ImGui::Button("Implicit Smoothing", ImVec2(-1, 0)))
 			{
-				// Waiting to change
+				Eigen::MatrixXd New_V = Im_smoothing(g_myctx.m_V, g_myctx.m_F, g_myctx.lambda, g_myctx.iteration);
+				g_myctx.m_V = New_V;
+
+				Eigen::SparseMatrix<double> L_B;
+				L_B = Laplace_Beltrami(g_myctx.m_V, g_myctx.m_F);
+				// cout << "Sparse Laplace_Beltrami matrix done" << endl;
+
+				Eigen::VectorXd H_nonU;
+				H_nonU = compute_meanH(g_myctx.m_V, g_myctx.m_F, L_B);
+
+				H_nonU = 10 * H_nonU.array() / (H_nonU.maxCoeff() - H_nonU.minCoeff());
+				//replace by color scheme
+				igl::parula(H_nonU, false, g_myctx.m_C);
+
 				g_myctx.mode = 1;
 				g_myctx.reset_display(viewer);
 			}
+			if (ImGui::Button("Reset the mesh", ImVec2(-1, 0)))
+			{
+				if (g_myctx.current_mesh == 0) { get_example_mesh("camelhead.off", g_myctx.m_V, g_myctx.m_F, g_myctx.m_VN); }
+				else if (g_myctx.current_mesh == 1) { get_example_mesh("bunny.off", g_myctx.m_V, g_myctx.m_F, g_myctx.m_VN); }
+				else if (g_myctx.current_mesh == 2) { get_example_mesh("camel.off", g_myctx.m_V, g_myctx.m_F, g_myctx.m_VN); }
+				else if (g_myctx.current_mesh == 3) { get_example_mesh("cow.off", g_myctx.m_V, g_myctx.m_F, g_myctx.m_VN); }
+				else if (g_myctx.current_mesh == 4) { get_example_mesh("cow_manifold.off", g_myctx.m_V, g_myctx.m_F, g_myctx.m_VN); }
 
+				g_myctx.mode = 0;
+				g_myctx.reset_display(viewer);
+			}
+			if (ImGui::Button("Add Noise", ImVec2(-1, 0)))
+			{
+				g_myctx.m_V = Noise(g_myctx.m_V, g_myctx.noise);
+
+				g_myctx.mode = 0;
+				g_myctx.reset_display(viewer);
+			}
+			
 		}
 
 		//mode - List box
